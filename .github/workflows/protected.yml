@@ -12,7 +12,7 @@ env:
   FULCIO_URL: https://fulcio.sigstore.dev
   FULCIO_OIDC_ISSUER: https://token.actions.githubusercontent.com
   FULCIO_OIDC_CLIENT_ID: sigstore
-  TSA_URL: https://timestamp.sigstore.dev
+  TSA_URL: https://timestamp.sigstore.dev/api/v1/timestamp
 
 jobs:
   # Job 1: Run simulated attack — secretscan MUST detect and FAIL
