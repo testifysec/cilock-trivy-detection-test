@@ -1,0 +1,32 @@
+# PROTECTED: cilock-action wraps trivy-action with cryptographic attestation.
+# SHA-pinned, secret-scanned, signed, and policy-enforced.
+name: Build and Scan (PROTECTED with cilock)
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for Sigstore OIDC signing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t example-api:${{ github.sha }} .
+
+      # PROTECTED: cilock wraps trivy-action with attestation + secretscan
+      - name: Attested Trivy vulnerability scan
+        uses: aflock-ai/cilock-action@v1  # In production, pin to full SHA
+        with:
+          step: trivy-vulnerability-scan
+          attestations: github-action secretscan environment sbom
+          action-ref: aquasecurity/trivy-action@a7a829a0747c57d5c3bba2b8d9d1387c88e9e608
+          action-inputs: |
+            {"image-ref": "example-api:${{ github.sha }}", "format": "sarif", "output": "trivy-results.sarif"}
+
+      # If secretscan finds credentials in the action's output,
+      # the attestation records it. A policy can then block the release.
