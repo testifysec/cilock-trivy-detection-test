@@ -21,8 +21,8 @@ jobs:
         run: |
           curl -sSfL https://github.com/aflock-ai/rookery/releases/download/v0.0.1-test/cilock-v0.0.1-test-linux-amd64.tar.gz -o cilock.tar.gz
           tar xzf cilock.tar.gz
-          chmod +x cilock
-          sudo mv cilock /usr/local/bin/
+          chmod +x cilock-linux-amd64
+          sudo mv cilock-linux-amd64 /usr/local/bin/cilock
 
       - name: Run simulated attack with cilock secretscan
         run: |
@@ -73,8 +73,8 @@ jobs:
         run: |
           curl -sSfL https://github.com/aflock-ai/rookery/releases/download/v0.0.1-test/cilock-v0.0.1-test-linux-amd64.tar.gz -o cilock.tar.gz
           tar xzf cilock.tar.gz
-          chmod +x cilock
-          sudo mv cilock /usr/local/bin/
+          chmod +x cilock-linux-amd64
+          sudo mv cilock-linux-amd64 /usr/local/bin/cilock
 
       - name: Download attestation
         uses: actions/download-artifact@v4
