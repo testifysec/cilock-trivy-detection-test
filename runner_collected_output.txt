@@ -1,2 +1,0 @@
-{"value":"ghp_xK9mN2vR7tY4wP6qL8jF3bC5hE0iA1dU9s","isSecret":true}
-{"value":"AKIAZ7VRSQ3WBHX4MJTN","isSecret":true}
