@@ -1,18 +1,24 @@
 {
   "expires": "2027-12-31T23:59:59Z",
-  "publickeys": {
-    "10031659dcaa4ab8d9d249497320f99842eaf1421ca64ed46cfc831a6a2f46e8": {
-      "keyid": "10031659dcaa4ab8d9d249497320f99842eaf1421ca64ed46cfc831a6a2f46e8",
-      "key": "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFYmZVWTNpNTczakZYNGxvaGtkYkF0bmhMSWlIVApQbTlnSlV0ZmRZNXY5TlBIRFVRTi9yQzFlbU1vaXF1S2VHNUllU2RsYlE0UVNHTzlsTjJpR2xYV0dnPT0KLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg=="
+  "roots": {
+    "sigstore-fulcio": {
+      "certificate": "",
+      "intermediates": []
     }
   },
   "steps": {
-    "trivy-scan-test": {
-      "name": "trivy-scan-test",
+    "clean-build": {
+      "name": "clean-build",
       "functionaries": [
         {
-          "type": "publickey",
-          "publickeyid": "10031659dcaa4ab8d9d249497320f99842eaf1421ca64ed46cfc831a6a2f46e8"
+          "type": "root",
+          "certConstraint": {
+            "commonname": "*",
+            "roots": ["sigstore-fulcio"],
+            "extensions": {
+              "issuer": "https://token.actions.githubusercontent.com"
+            }
+          }
         }
       ],
       "attestations": [
