@@ -12,6 +12,7 @@ env:
   FULCIO_URL: https://fulcio.sigstore.dev
   FULCIO_OIDC_ISSUER: https://token.actions.githubusercontent.com
   FULCIO_OIDC_CLIENT_ID: sigstore
+  TSA_URL: https://timestamp.sigstore.dev
 
 jobs:
   # Job 1: Run simulated attack — secretscan MUST detect and FAIL
@@ -45,6 +46,7 @@ jobs:
             --signer-fulcio-url ${{ env.FULCIO_URL }} \
             --signer-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
             --signer-fulcio-oidc-client-id ${{ env.FULCIO_OIDC_CLIENT_ID }} \
+            --timestamp-servers ${{ env.TSA_URL }} \
             --enable-archivista=false \
             --outfile attack-attestation.json \
             -- bash entrypoint.sh
@@ -116,6 +118,7 @@ jobs:
             --signer-fulcio-url ${{ env.FULCIO_URL }} \
             --signer-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
             --signer-fulcio-oidc-client-id ${{ env.FULCIO_OIDC_CLIENT_ID }} \
+            --timestamp-servers ${{ env.TSA_URL }} \
             --enable-archivista=false \
             --outfile clean-attestation.json \
             -- echo "Hello from a clean build step. No secrets here."
@@ -160,7 +163,7 @@ jobs:
           chmod +x cilock-linux-amd64
           sudo mv cilock-linux-amd64 /usr/local/bin/cilock
 
-      - name: Download Fulcio root CA
+      - name: Download Sigstore trust bundle (Fulcio + TSA)
         run: |
           curl -sSf https://fulcio.sigstore.dev/api/v2/trustBundle | python3 -c "
           import json, sys
@@ -173,6 +176,13 @@ jobs:
               f.write(intermediate)
           print('Fulcio root and intermediate certificates downloaded')
           "
+          # Download TSA certificate chain
+          curl -sSf https://timestamp.sigstore.dev/api/v1/timestamp/certchain -o tsa-certchain.pem
+          # Extract just the root CA (last cert in the chain)
+          csplit -z -f tsa-cert- tsa-certchain.pem '/-----BEGIN CERTIFICATE-----/' '{*}' 2>/dev/null
+          # The last file is the root
+          ls -1 tsa-cert-* | tail -1 | xargs -I{} cp {} tsa-root.pem
+          echo "TSA certificate chain downloaded"
 
       - name: Inject Fulcio root into policy
         run: |
@@ -194,8 +204,9 @@ jobs:
             -o policy-signed.json \
             --signer-fulcio-url ${{ env.FULCIO_URL }} \
             --signer-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
-            --signer-fulcio-oidc-client-id ${{ env.FULCIO_OIDC_CLIENT_ID }}
-          echo "Policy signed with Fulcio certificate"
+            --signer-fulcio-oidc-client-id ${{ env.FULCIO_OIDC_CLIENT_ID }} \
+            --timestamp-servers ${{ env.TSA_URL }}
+          echo "Policy signed with Fulcio certificate + TSA timestamp"
 
       - name: Download clean attestation
         uses: actions/download-artifact@v4
@@ -214,6 +225,7 @@ jobs:
             --enable-archivista=false \
             --policy-ca-roots fulcio-root.pem \
             --policy-ca-intermediates fulcio-intermediate.pem \
+            --policy-timestamp-servers tsa-root.pem \
             --policy-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
             --log-level info 2>&1 | tee verify-clean-output.txt
           echo '```' >> $GITHUB_STEP_SUMMARY
