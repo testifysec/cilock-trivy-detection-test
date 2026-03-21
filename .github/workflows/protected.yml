@@ -1,119 +1,116 @@
-# PROTECTED: cilock-action wraps trivy-action with cryptographic attestation.
-# SHA-pinned, secret-scanned, signed, policy-enforced, and SARIF-captured.
-name: Build and Scan (PROTECTED with cilock)
+# cilock detection validation: proves secretscan catches TeamPCP-style attacks
+# Uses Fulcio OIDC signing (native to GitHub Actions) + cilock verify with policy
+name: cilock Detection Validation
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger for testing
+  workflow_dispatch:
 
 jobs:
-  build-and-scan:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write  # Required for Sigstore OIDC signing
-      contents: read
-    outputs:
-      scan-attestation-oid: ${{ steps.trivy-scan.outputs.git_oid }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: docker build -t example-api:${{ github.sha }} .
-
-      # cilock wraps trivy-action with full attestation suite
-      - name: Attested Trivy vulnerability scan
-        id: trivy-scan
-        uses: aflock-ai/cilock-action@v1
-        with:
-          step: trivy-vulnerability-scan
-          attestations: github-action secretscan sarif git environment
-          action-ref: aquasecurity/trivy-action@a7a829a0747c57d5c3bba2b8d9d1387c88e9e608
-          action-inputs: |
-            {"image-ref": "example-api:${{ github.sha }}", "format": "sarif", "output": "trivy-results.sarif"}
-
-      - name: Display attestation ID
-        run: |
-          echo "Scan attestation GitOID: ${{ steps.trivy-scan.outputs.git_oid }}"
-          echo "Attestation file: ${{ steps.trivy-scan.outputs.attestation_file }}"
-
-  # Simulate the malicious entrypoint.sh from the Trivy attack
+  # Job 1: Run the simulated attack payload wrapped in cilock
   detect-attack:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
-    outputs:
-      attack-attestation-oid: ${{ steps.attack-sim.outputs.git_oid }}
     steps:
       - uses: actions/checkout@v4
 
-      # cilock wraps the simulated attack — secretscan WILL fire
-      - name: Run simulated attack payload (cilock catches secrets)
-        id: attack-sim
-        uses: aflock-ai/cilock-action@v1
-        with:
-          step: attack-simulation
-          attestations: secretscan environment git
-          command: bash entrypoint.sh
-          outfile: attack-attestation.json
+      - name: Install cilock
+        run: |
+          curl -sSfL https://github.com/aflock-ai/rookery/releases/download/v0.0.1-test/cilock-v0.0.1-test-linux-amd64.tar.gz -o cilock.tar.gz
+          tar xzf cilock.tar.gz
+          chmod +x cilock
+          sudo mv cilock /usr/local/bin/
 
-      - name: Upload attestation artifact
+      - name: Run simulated attack with cilock secretscan
+        run: |
+          cilock run \
+            --step attack-simulation \
+            --attestations secretscan \
+            --attestations git \
+            --attestations environment \
+            --signer-fulcio-url https://fulcio.sigstore.dev \
+            --signer-fulcio-oidc-issuer https://token.actions.githubusercontent.com \
+            --signer-fulcio-oidc-client-id sigstore \
+            --enable-archivista=false \
+            --outfile attack-attestation.json \
+            -- bash entrypoint.sh
+
+      - name: Show secretscan findings
+        run: |
+          echo "## Secretscan Findings" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json, base64
+          data = json.load(open('attack-attestation.json'))
+          payload = json.loads(base64.b64decode(data['payload']))
+          for att in payload['predicate']['attestations']:
+              if 'secretscan' in att['type']:
+                  findings = att['attestation'].get('findings') or []
+                  print(f'Found {len(findings)} secrets in pipeline output')
+                  for f in findings:
+                      print(f'  - {f[\"ruleId\"]}: {f[\"match\"][:40]}...')
+          " | tee -a $GITHUB_STEP_SUMMARY
+
+      - name: Upload attestation
         uses: actions/upload-artifact@v4
         with:
           name: attack-attestation
           path: attack-attestation.json
 
-  # Policy verification step
+  # Job 2: Verify the attestation against policy using cilock verify
   verify-policy:
-    needs: [build-and-scan, detect-attack]
+    needs: detect-attack
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download attack attestation
+      - name: Install cilock
+        run: |
+          curl -sSfL https://github.com/aflock-ai/rookery/releases/download/v0.0.1-test/cilock-v0.0.1-test-linux-amd64.tar.gz -o cilock.tar.gz
+          tar xzf cilock.tar.gz
+          chmod +x cilock
+          sudo mv cilock /usr/local/bin/
+
+      - name: Download attestation
         uses: actions/download-artifact@v4
         with:
           name: attack-attestation
 
-      - name: Install OPA
+      - name: Sign policy with Fulcio
         run: |
-          curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
-          chmod +x opa
-          sudo mv opa /usr/local/bin/
+          cilock sign \
+            -f policy.json \
+            -o policy-signed.json \
+            --signer-fulcio-url https://fulcio.sigstore.dev \
+            --signer-fulcio-oidc-issuer https://token.actions.githubusercontent.com \
+            --signer-fulcio-oidc-client-id sigstore
 
-      - name: Extract attestation payload
+      - name: Verify attestation against policy
+        id: verify
+        continue-on-error: true
         run: |
-          cat attack-attestation.json | python3 -c "
-          import json, base64, sys
-          data = json.load(sys.stdin)
-          payload = json.loads(base64.b64decode(data['payload']))
-          json.dump(payload, open('decoded-payload.json', 'w'), indent=2)
-          "
+          cilock verify \
+            -p policy-signed.json \
+            -a attack-attestation.json \
+            -f entrypoint.sh \
+            --enable-archivista=false \
+            --policy-ca-roots sigstore-root.pem \
+            --log-level info 2>&1 | tee verify-output.txt
 
-      - name: Run secretscan policy
+      - name: Report results
         run: |
-          echo "=== Evaluating secretscan policy ==="
-          opa eval -i decoded-payload.json -d policy-secretscan.rego \
-            'data.cilock.verify.deny' --format pretty
-          echo ""
-          DENIALS=$(opa eval -i decoded-payload.json -d policy-secretscan.rego \
-            'count(data.cilock.verify.deny)' --format raw)
-          echo "Policy denials: $DENIALS"
-          if [ "$DENIALS" -gt 0 ]; then
-            echo "::error::POLICY VIOLATION: Secrets detected in pipeline output!"
-            echo "This is expected — the simulated attack payload contains credentials."
-            echo "In production, this would block the release."
+          echo "## Policy Verification Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat verify-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if grep -q "Secret detected" verify-output.txt 2>/dev/null || grep -q "policy.*denied\|Verification failed" verify-output.txt 2>/dev/null; then
+            echo "**POLICY DENIED** — secrets detected in pipeline output. This is expected for the attack simulation." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Note:** Policy verification output above. Check for Rego policy denial messages." >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: Summary
-        run: |
-          echo "## cilock Detection Validation Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Scan attestation | ${{ needs.build-and-scan.outputs.scan-attestation-oid || 'Generated' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Attack simulation | Secrets detected in output |" >> $GITHUB_STEP_SUMMARY
-          echo "| Policy verification | Denials triggered (expected) |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "See [blog post](https://testifysec.com/blog/cilock-action-supply-chain-attacks) for full analysis." >> $GITHUB_STEP_SUMMARY

@@ -1,43 +1,27 @@
 {
   "expires": "2027-12-31T23:59:59Z",
-  "roots": {
-    "fulcio": {
-      "certificate": "LS0tLS1CRUdJTi...",
-      "intermediates": []
+  "publickeys": {
+    "10031659dcaa4ab8d9d249497320f99842eaf1421ca64ed46cfc831a6a2f46e8": {
+      "keyid": "10031659dcaa4ab8d9d249497320f99842eaf1421ca64ed46cfc831a6a2f46e8",
+      "key": "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFYmZVWTNpNTczakZYNGxvaGtkYkF0bmhMSWlIVApQbTlnSlV0ZmRZNXY5TlBIRFVRTi9yQzFlbU1vaXF1S2VHNUllU2RsYlE0UVNHTzlsTjJpR2xYV0dnPT0KLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg=="
     }
   },
   "steps": {
-    "trivy-vulnerability-scan": {
-      "name": "trivy-vulnerability-scan",
+    "trivy-scan-test": {
+      "name": "trivy-scan-test",
       "functionaries": [
         {
-          "type": "root",
-          "certConstraint": {
-            "commonname": "*",
-            "roots": ["fulcio"],
-            "extensions": {
-              "issuer": "https://token.actions.githubusercontent.com",
-              "githubWorkflowRepository": "your-org/*"
-            }
-          }
+          "type": "publickey",
+          "publickeyid": "10031659dcaa4ab8d9d249497320f99842eaf1421ca64ed46cfc831a6a2f46e8"
         }
       ],
       "attestations": [
-        {
-          "type": "https://aflock.ai/attestations/github-action/v0.1",
-          "regopolicies": [
-            {
-              "name": "approved-action-sources",
-              "module": "cGFja2FnZSBjaWxvY2sudmVyaWZ5CgppbXBvcnQgcmVnby52MQoKYXBwcm92ZWRfc291cmNlcyA6PSBbImNoYWluZ3VhcmQtZGV2LyIsICJ5b3VyLW9yZy8iLCAiYWN0aW9ucy8iLCAiYWZsb2NrLWFpLyJdCgpkZW55IGNvbnRhaW5zIG1zZyBpZiB7CiAgICByZWYgOj0gaW5wdXQuYWN0aW9ucmVmCiAgICBub3Qgc291cmNlX2FwcHJvdmVkKHJlZikKICAgIG1zZyA6PSBzcHJpbnRmKCJBY3Rpb24gZnJvbSB1bnRydXN0ZWQgc291cmNlOiAlcyIsIFtyZWZdKQp9CgpkZW55IGNvbnRhaW5zIG1zZyBpZiB7CiAgICBub3QgaW5wdXQucmVmcGlubmVkCiAgICBtc2cgOj0gc3ByaW50ZigiQWN0aW9uIHJlZiBub3QgcGlubmVkIHRvIFNIQTogJXMiLCBbaW5wdXQuYWN0aW9ucmVmXSkKfQoKc291cmNlX2FwcHJvdmVkKHJlZikgaWYgewogICAgc29tZSBwcmVmaXggaW4gYXBwcm92ZWRfc291cmNlcwogICAgc3RhcnRzd2l0aChyZWYsIHByZWZpeCkKfQo="
-            }
-          ]
-        },
         {
           "type": "https://aflock.ai/attestations/secretscan/v0.1",
           "regopolicies": [
             {
               "name": "no-secrets-in-output",
-              "module": "cGFja2FnZSBjaWxvY2sudmVyaWZ5CgppbXBvcnQgcmVnby52MQoKZGVueSBjb250YWlucyBtc2cgaWYgewogICAgc29tZSBmaW5kaW5nIGluIGlucHV0LmZpbmRpbmdzCiAgICBtc2cgOj0gc3ByaW50ZigiU2VjcmV0IGRldGVjdGVkOiAlcyBhdCAlcyIsIFtmaW5kaW5nLnJ1bGVJZCwgZmluZGluZy5sb2NhdGlvbl0pCn0K"
+              "module": "cGFja2FnZSBjaWxvY2sudmVyaWZ5CgpkZW55W21zZ10gewogICAgaW5wdXQuZmluZGluZ3MgIT0gbnVsbAogICAgY291bnQoaW5wdXQuZmluZGluZ3MpID4gMAogICAgZmluZGluZyA6PSBpbnB1dC5maW5kaW5nc1tfXQogICAgbXNnIDo9IHNwcmludGYoIlNlY3JldCBkZXRlY3RlZDogJXMgYXQgJXMiLCBbZmluZGluZy5ydWxlSWQsIGZpbmRpbmcubG9jYXRpb25dKQp9Cg=="
             }
           ]
         }
