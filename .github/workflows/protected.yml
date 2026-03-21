@@ -166,24 +166,15 @@ jobs:
       - name: Download Sigstore trust bundle (Fulcio + TSA)
         run: |
           curl -sSf https://fulcio.sigstore.dev/api/v2/trustBundle | python3 -c "
-          import json, sys, subprocess
+          import json, sys
           data = json.load(sys.stdin)
           certs = data['chains'][0]['certificates']
-          # Determine which is root vs intermediate by checking subject/issuer
-          for i, cert in enumerate(certs):
-              with open(f'/tmp/cert-{i}.pem', 'w') as f:
-                  f.write(cert)
-              result = subprocess.run(['openssl', 'x509', '-in', f'/tmp/cert-{i}.pem', '-subject', '-issuer', '-noout'], capture_output=True, text=True)
-              subj = result.stdout.strip()
-              print(f'Cert {i}: {subj}')
-              if 'CN=sigstore-intermediate' not in subj.split('\n')[0]:
-                  # This is the root (self-signed or not the intermediate)
-                  with open('fulcio-root.pem', 'w') as f:
-                      f.write(cert)
-              else:
-                  with open('fulcio-intermediate.pem', 'w') as f:
-                      f.write(cert)
-          print('Fulcio root and intermediate certificates identified and saved')
+          # cert[0] = intermediate (sigstore-intermediate), cert[1] = root (sigstore)
+          with open('fulcio-intermediate.pem', 'w') as f:
+              f.write(certs[0])
+          with open('fulcio-root.pem', 'w') as f:
+              f.write(certs[1])
+          print(f'Downloaded {len(certs)} Fulcio certificates')
           "
           # Download TSA certificate chain
           curl -sSf https://timestamp.sigstore.dev/api/v1/timestamp/certchain -o tsa-certchain.pem
