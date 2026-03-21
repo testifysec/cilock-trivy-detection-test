@@ -1,5 +1,5 @@
 # cilock detection validation: proves secretscan catches TeamPCP-style attacks
-# Uses Fulcio OIDC signing + cilock verify with signed policy + Fulcio root CA
+# Fulcio OIDC + TSA for attestation signing, pre-signed policy for verification
 name: cilock Detection Validation
 
 on:
@@ -15,7 +15,7 @@ env:
   TSA_URL: https://timestamp.sigstore.dev/api/v1/timestamp
 
 jobs:
-  # Job 1: Run simulated attack — secretscan MUST detect and FAIL
+  # Job 1: Attack payload — secretscan BLOCKS the build
   detect-attack:
     runs-on: ubuntu-latest
     permissions:
@@ -30,10 +30,8 @@ jobs:
           tar xzf cilock.tar.gz
           chmod +x cilock-linux-amd64
           sudo mv cilock-linux-amd64 /usr/local/bin/cilock
-          cilock --version || cilock --help | head -1
 
-      # This SHOULD fail — the attack payload contains secrets
-      - name: Run attack payload (expect failure)
+      - name: Run attack payload (expect FAILURE)
         id: attack
         continue-on-error: true
         run: |
@@ -51,24 +49,18 @@ jobs:
             --outfile attack-attestation.json \
             -- bash entrypoint.sh
 
-      - name: Verify secretscan blocked the build
+      - name: Verify build was blocked
         run: |
           if [ "${{ steps.attack.outcome }}" = "failure" ]; then
-            echo "## cilock BLOCKED the build — secrets detected" >> $GITHUB_STEP_SUMMARY
-            echo "The --attestor-secretscan-fail-on-detection flag caused cilock to exit non-zero." >> $GITHUB_STEP_SUMMARY
-            echo "This is the expected behavior — the TeamPCP attack payload was caught." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## WARNING: cilock did NOT block the build" >> $GITHUB_STEP_SUMMARY
-            echo "The attack payload may not have triggered secretscan detection." >> $GITHUB_STEP_SUMMARY
+            echo "## cilock BLOCKED the build" >> $GITHUB_STEP_SUMMARY
+            echo "secretscan detected credentials in pipeline output." >> $GITHUB_STEP_SUMMARY
           fi
 
-      # Even though the step failed, the attestation was still written
-      # (cilock writes the attestation before checking fail-on-detection)
-      - name: Show findings from attestation
+      - name: Show findings
         if: always()
         run: |
           if [ -f attack-attestation.json ]; then
-            echo "## Secretscan Findings" >> $GITHUB_STEP_SUMMARY
+            echo "## Findings" >> $GITHUB_STEP_SUMMARY
             echo '```json' >> $GITHUB_STEP_SUMMARY
             python3 -c "
           import json, base64
@@ -77,11 +69,9 @@ jobs:
           for att in payload['predicate']['attestations']:
               if 'secretscan' in att['type']:
                   findings = att['attestation'].get('findings') or []
-                  print(json.dumps({'total_findings': len(findings), 'findings': [{'ruleId': f['ruleId'], 'location': f['location']} for f in findings]}, indent=2))
+                  print(json.dumps({'total': len(findings), 'findings': [{'rule': f['ruleId'], 'loc': f['location']} for f in findings]}, indent=2))
           " >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "No attestation file produced." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload attestation
@@ -92,7 +82,7 @@ jobs:
           path: attack-attestation.json
           if-no-files-found: ignore
 
-  # Job 2: Run a CLEAN step — secretscan should PASS
+  # Job 2: Clean step — should PASS
   clean-step:
     runs-on: ubuntu-latest
     permissions:
@@ -114,6 +104,7 @@ jobs:
             --step clean-build \
             --attestations secretscan \
             --attestations git \
+            --attestations environment \
             --attestor-secretscan-fail-on-detection \
             --signer-fulcio-url ${{ env.FULCIO_URL }} \
             --signer-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
@@ -123,9 +114,9 @@ jobs:
             --outfile clean-attestation.json \
             -- echo "Hello from a clean build step. No secrets here."
 
-      - name: Confirm clean pass
+      - name: Confirm clean
         run: |
-          echo "## Clean Step Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Clean Step" >> $GITHUB_STEP_SUMMARY
           python3 -c "
           import json, base64
           data = json.load(open('clean-attestation.json'))
@@ -133,26 +124,19 @@ jobs:
           for att in payload['predicate']['attestations']:
               if 'secretscan' in att['type']:
                   findings = att['attestation'].get('findings') or []
-                  if len(findings) == 0:
-                      print('No secrets detected. Clean build passed.')
-                  else:
-                      print(f'WARNING: {len(findings)} findings in clean build')
+                  print(f'Findings: {len(findings)} (expected: 0)')
           " | tee -a $GITHUB_STEP_SUMMARY
 
-      - name: Upload clean attestation
+      - name: Upload attestation
         uses: actions/upload-artifact@v4
         with:
           name: clean-attestation
           path: clean-attestation.json
 
-  # Job 3: Verify attestations against policy using cilock verify
+  # Job 3: cilock verify with pre-signed policy
   verify-policy:
-    needs: [detect-attack, clean-step]
-    if: always()
+    needs: [clean-step]
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -163,84 +147,34 @@ jobs:
           chmod +x cilock-linux-amd64
           sudo mv cilock-linux-amd64 /usr/local/bin/cilock
 
-      - name: Download Sigstore trust bundle (Fulcio + TSA)
-        run: |
-          curl -sSf https://fulcio.sigstore.dev/api/v2/trustBundle | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          certs = data['chains'][0]['certificates']
-          # cert[0] = intermediate (sigstore-intermediate), cert[1] = root (sigstore)
-          with open('fulcio-intermediate.pem', 'w') as f:
-              f.write(certs[0])
-          with open('fulcio-root.pem', 'w') as f:
-              f.write(certs[1])
-          print(f'Downloaded {len(certs)} Fulcio certificates')
-          "
-          # Download TSA certificate chain
-          curl -sSf https://timestamp.sigstore.dev/api/v1/timestamp/certchain -o tsa-certchain.pem
-          # Extract just the root CA (last cert in the chain)
-          csplit -z -f tsa-cert- tsa-certchain.pem '/-----BEGIN CERTIFICATE-----/' '{*}' 2>/dev/null
-          # The last file is the root
-          ls -1 tsa-cert-* | tail -1 | xargs -I{} cp {} tsa-root.pem
-          echo "TSA certificate chain downloaded"
-
-      - name: Inject Fulcio root into policy
-        run: |
-          ROOT_CERT_B64=$(base64 -w0 fulcio-root.pem)
-          INTERMEDIATE_CERT_B64=$(base64 -w0 fulcio-intermediate.pem)
-          python3 -c "
-          import json, sys
-          policy = json.load(open('policy.json'))
-          policy['roots']['sigstore-fulcio']['certificate'] = '$ROOT_CERT_B64'
-          policy['roots']['sigstore-fulcio']['intermediates'] = ['$INTERMEDIATE_CERT_B64']
-          json.dump(policy, open('policy-with-roots.json', 'w'), indent=2)
-          print('Fulcio root CA injected into policy')
-          "
-
-      - name: Sign policy with Fulcio
-        run: |
-          cilock sign \
-            -f policy-with-roots.json \
-            -o policy-signed.json \
-            --signer-fulcio-url ${{ env.FULCIO_URL }} \
-            --signer-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
-            --signer-fulcio-oidc-client-id ${{ env.FULCIO_OIDC_CLIENT_ID }} \
-            --timestamp-servers ${{ env.TSA_URL }}
-          echo "Policy signed with Fulcio certificate + TSA timestamp"
-
       - name: Download clean attestation
         uses: actions/download-artifact@v4
         with:
           name: clean-attestation
 
       - name: Verify clean attestation against policy
-        id: verify-clean
+        id: verify
         continue-on-error: true
         run: |
-          echo "## Policy Verification: Clean Build" >> $GITHUB_STEP_SUMMARY
+          echo "## Policy Verification" >> $GITHUB_STEP_SUMMARY
           cilock verify \
             -p policy-signed.json \
             -a clean-attestation.json \
             -f entrypoint.sh \
+            -k policy-pub.pem \
             --enable-archivista=false \
-            --policy-ca-roots fulcio-root.pem \
-            --policy-ca-intermediates fulcio-intermediate.pem \
-            --policy-timestamp-servers tsa-root.pem \
-            --policy-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
-            --log-level info 2>&1 | tee verify-clean-output.txt
+            --log-level info 2>&1 | tee verify-output.txt
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat verify-clean-output.txt >> $GITHUB_STEP_SUMMARY
+          cat verify-output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Summary
         if: always()
         run: |
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "## Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Attack payload blocked by secretscan | ${{ needs.detect-attack.result == 'success' && 'BLOCKED' || 'Check logs' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Attack blocked by secretscan | ${{ needs.detect-attack.result == 'success' && 'BLOCKED' || 'See logs' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Clean step passed | ${{ needs.clean-step.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Policy verification | ${{ steps.verify-clean.outcome }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "[Blog post](https://testifysec.com/blog/cilock-action-supply-chain-attacks) | [Test repo](https://github.com/testifysec/cilock-trivy-detection-test)" >> $GITHUB_STEP_SUMMARY
+          echo "| Policy verification | ${{ steps.verify.outcome }} |" >> $GITHUB_STEP_SUMMARY
