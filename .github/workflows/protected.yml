@@ -157,10 +157,12 @@ jobs:
         continue-on-error: true
         run: |
           echo "## Policy Verification" >> $GITHUB_STEP_SUMMARY
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "Using commit SHA as subject: $COMMIT_SHA"
           cilock verify \
             -p policy-signed.json \
             -a clean-attestation.json \
-            -f entrypoint.sh \
+            -s "sha1:$COMMIT_SHA" \
             -k policy-pub.pem \
             --enable-archivista=false \
             --log-level debug 2>&1 | tee verify-output.txt
