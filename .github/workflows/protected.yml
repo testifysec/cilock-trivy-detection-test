@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  CILOCK_VERSION: v0.0.2-test
+  CILOCK_VERSION: v0.0.3-debug
   FULCIO_URL: https://fulcio.sigstore.dev
   FULCIO_OIDC_ISSUER: https://token.actions.githubusercontent.com
   FULCIO_OIDC_CLIENT_ID: sigstore
@@ -163,7 +163,7 @@ jobs:
             -f entrypoint.sh \
             -k policy-pub.pem \
             --enable-archivista=false \
-            --log-level info 2>&1 | tee verify-output.txt
+            --log-level debug 2>&1 | tee verify-output.txt
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat verify-output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
