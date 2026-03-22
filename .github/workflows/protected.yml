@@ -467,9 +467,22 @@ jobs:
         run: |
           echo "## Source Restriction Policy Verification" >> $GITHUB_STEP_SUMMARY
           echo "Expected: DENY because actions/setup-node@v4 is not SHA-pinned" >> $GITHUB_STEP_SUMMARY
+          # Extract the subject digest from the attestation
+          SUBJECT_DIGEST=$(python3 -c "
+          import json, base64
+          data = json.load(open('wrapped-action-attestation.json'))
+          payload = json.loads(base64.b64decode(data['payload']))
+          for s in payload.get('subject', []):
+              for algo, digest in s.get('digest', {}).items():
+                  print(f'{algo}:{digest}')
+                  break
+              break
+          ")
+          echo "Using subject: $SUBJECT_DIGEST"
           cilock verify \
             -p policy-source-signed.json \
             -a wrapped-action-attestation.json \
+            -s "$SUBJECT_DIGEST" \
             -k policy-pub.pem \
             --enable-archivista=false \
             --log-level debug 2>&1 | tee source-verify-output.txt
