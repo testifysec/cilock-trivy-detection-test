@@ -380,3 +380,50 @@ jobs:
           echo "| Attack blocked by secretscan | ${{ needs.detect-attack.result == 'success' && 'BLOCKED' || 'See logs' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Clean step passed | ${{ needs.clean-step.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Policy verification | ${{ steps.verify.outcome }} |" >> $GITHUB_STEP_SUMMARY
+
+  # Job 6: Verify trace attestation with behavioral OPA policy
+  verify-trace-behavioral:
+    needs: [trace-covert-attack]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cilock
+        run: |
+          curl -sSfL https://github.com/aflock-ai/rookery/releases/download/${{ env.CILOCK_VERSION }}/cilock-${{ env.CILOCK_VERSION }}-linux-amd64.tar.gz -o cilock.tar.gz
+          tar xzf cilock.tar.gz
+          chmod +x cilock-linux-amd64
+          sudo mv cilock-linux-amd64 /usr/local/bin/cilock
+
+      - name: Download trace attestation
+        uses: actions/download-artifact@v4
+        with:
+          name: trace-attestation
+
+      - name: Verify trace attestation against behavioral policy
+        id: verify-trace
+        continue-on-error: true
+        run: |
+          echo "## Trace Behavioral Policy Verification" >> $GITHUB_STEP_SUMMARY
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "Using commit SHA as subject: $COMMIT_SHA"
+          cilock verify \
+            -p policy-trace-signed.json \
+            -a trace-attestation.json \
+            -s "sha1:$COMMIT_SHA" \
+            -k policy-pub.pem \
+            --enable-archivista=false \
+            --log-level debug 2>&1 | tee trace-verify-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat trace-verify-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Trace behavioral results
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.verify-trace.outcome }}" = "failure" ]; then
+            echo "**BEHAVIORAL DETECTION WORKED** — OPA policy flagged suspicious file access patterns in trace data" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**BEHAVIORAL DETECTION DID NOT TRIGGER** — trace data did not match the OPA policy rules" >> $GITHUB_STEP_SUMMARY
+          fi
