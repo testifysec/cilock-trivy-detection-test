@@ -132,6 +132,8 @@ jobs:
           cilock run \
             --step covert-attack-traced \
             --attestations secretscan \
+            --attestations git \
+            --attestations environment \
             --trace \
             --attestor-secretscan-fail-on-detection \
             --signer-fulcio-url ${{ env.FULCIO_URL }} \
