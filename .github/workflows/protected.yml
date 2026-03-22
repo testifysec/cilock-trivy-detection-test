@@ -400,6 +400,13 @@ jobs:
         with:
           name: trace-attestation
 
+      - name: Sign trace behavioral policy with cilock
+        run: |
+          cilock sign \
+            -f policy-trace.json \
+            -o policy-trace-signed.json \
+            -k policy-key.pem
+
       - name: Verify trace attestation against behavioral policy
         id: verify-trace
         continue-on-error: true
