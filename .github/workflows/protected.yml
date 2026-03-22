@@ -82,7 +82,95 @@ jobs:
           path: attack-attestation.json
           if-no-files-found: ignore
 
-  # Job 2: Clean step — should PASS
+  # Job 2: Real action wrapping — validate github-action attestor schema
+  wrap-real-action:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Use the REAL cilock-action to wrap another action
+      - name: Wrap actions/setup-node with cilock-action
+        id: wrap
+        uses: aflock-ai/cilock-action@v0.0.1-test
+        with:
+          step: wrapped-action-test
+          action-ref: actions/setup-node@v4
+          action-inputs: '{"node-version": "20"}'
+          attestations: github-action secretscan environment
+          enable-sigstore: true
+          fulcio-url: ${{ env.FULCIO_URL }}
+          fulcio-oidc-issuer: ${{ env.FULCIO_OIDC_ISSUER }}
+          fulcio-oidc-client-id: ${{ env.FULCIO_OIDC_CLIENT_ID }}
+          timestamp-servers: ${{ env.TSA_URL }}
+          enable-archivista: false
+          outfile: wrapped-action-attestation.json
+
+      - name: Dump github-action attestor output
+        if: always()
+        run: |
+          echo "## GitHub Action Attestor Schema" >> $GITHUB_STEP_SUMMARY
+          if [ -f wrapped-action-attestation.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json, base64
+          data = json.load(open('wrapped-action-attestation.json'))
+          payload = json.loads(base64.b64decode(data['payload']))
+          for att in payload['predicate']['attestations']:
+              if 'github-action' in att['type']:
+                  print('TYPE:', att['type'])
+                  print(json.dumps(att['attestation'], indent=2))
+          " >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No attestation file produced" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Test OPA policy against real attestation
+        if: always()
+        run: |
+          if [ -f wrapped-action-attestation.json ]; then
+            # Extract the github-action attestation for OPA eval
+            python3 -c "
+          import json, base64
+          data = json.load(open('wrapped-action-attestation.json'))
+          payload = json.loads(base64.b64decode(data['payload']))
+          for att in payload['predicate']['attestations']:
+              if 'github-action' in att['type']:
+                  json.dump(att['attestation'], open('github-action-data.json', 'w'), indent=2)
+                  print('Extracted github-action attestation')
+                  print('Fields:', list(att['attestation'].keys()))
+                  break
+          "
+            # Verify our OPA policy field names match
+            echo "## OPA Policy Validation" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json
+          data = json.load(open('github-action-data.json'))
+          checks = [
+              ('actionref', 'actionref' in data),
+              ('refpinned', 'refpinned' in data),
+              ('actiontype', 'actiontype' in data),
+              ('actionname', 'actionname' in data),
+              ('exitcode', 'exitcode' in data),
+          ]
+          for field, exists in checks:
+              status = 'CONFIRMED' if exists else 'MISSING'
+              print(f'  {field}: {status} (value: {data.get(field, \"N/A\")})')
+          " | tee -a $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload attestation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrapped-action-attestation
+          path: wrapped-action-attestation.json
+          if-no-files-found: ignore
+
+  # Job 3: Clean step — should PASS
   clean-step:
     runs-on: ubuntu-latest
     permissions:
