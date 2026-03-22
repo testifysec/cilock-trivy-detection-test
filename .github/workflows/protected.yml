@@ -294,6 +294,10 @@ jobs:
       - name: Build Docker image for Trivy to scan
         run: docker build -t example-api:test .
 
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
       # This is what a protected pipeline looks like:
       # cilock-action wraps the real trivy-action, capturing attestation data
       # including github-action attestor (actionref, refpinned) and secretscan.
@@ -304,7 +308,7 @@ jobs:
         with:
           step: trivy-scan
           action-ref: aquasecurity/trivy-action@v0.35.0
-          action-inputs: '{"image-ref": "example-api:test", "format": "sarif", "output": "trivy-results.sarif", "severity": "CRITICAL,HIGH"}'
+          action-inputs: '{"image-ref": "example-api:test", "format": "sarif", "output": "trivy-results.sarif", "severity": "CRITICAL,HIGH", "skip-setup-trivy": "true"}'
           attestations: github-action secretscan environment
           enable-sigstore: true
           fulcio-url: ${{ env.FULCIO_URL }}
