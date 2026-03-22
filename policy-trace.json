@@ -16,6 +16,34 @@
   "steps": {
     "covert-attack-traced": {
       "name": "covert-attack-traced",
+      "functionaries": [
+        {
+          "type": "root",
+          "certConstraint": {
+            "commonname": "*",
+            "dnsnames": [
+              "*"
+            ],
+            "emails": [
+              "*"
+            ],
+            "organizations": [
+              "*"
+            ],
+            "uris": [
+              "*"
+            ],
+            "roots": [
+              "ac5a60ca80f473f8b7742111f9eb49bf7dbd8f03f41a5b39d58b62b6f0de4d0f"
+            ],
+            "extensions": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "source_repository_uri": "https://github.com/testifysec/cilock-trivy-detection-test",
+              "runner_environment": "github-hosted"
+            }
+          }
+        }
+      ],
       "attestations": [
         {
           "type": "https://aflock.ai/attestations/command-run/v0.1",
