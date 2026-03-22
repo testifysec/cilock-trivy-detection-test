@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  CILOCK_VERSION: v0.0.3-debug
+  CILOCK_VERSION: v0.0.4-fix
   FULCIO_URL: https://fulcio.sigstore.dev
   FULCIO_OIDC_ISSUER: https://token.actions.githubusercontent.com
   FULCIO_OIDC_CLIENT_ID: sigstore
