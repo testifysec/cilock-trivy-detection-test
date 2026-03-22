@@ -303,7 +303,7 @@ jobs:
         uses: aflock-ai/cilock-action@v0.0.1-test
         with:
           step: trivy-scan
-          action-ref: aquasecurity/trivy-action@0.28.0
+          action-ref: aquasecurity/trivy-action@v0.35.0
           action-inputs: '{"image-ref": "example-api:test", "format": "sarif", "output": "trivy-results.sarif", "severity": "CRITICAL,HIGH"}'
           attestations: github-action secretscan environment
           enable-sigstore: true
