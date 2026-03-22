@@ -282,6 +282,100 @@ jobs:
           path: wrapped-action-attestation.json
           if-no-files-found: ignore
 
+  # Job: Wrap REAL trivy-action with cilock-action — as close to actual attack scenario as possible
+  wrap-real-trivy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image for Trivy to scan
+        run: docker build -t example-api:test .
+
+      # This is what a protected pipeline looks like:
+      # cilock-action wraps the real trivy-action, capturing attestation data
+      # including github-action attestor (actionref, refpinned) and secretscan.
+      - name: Wrap aquasecurity/trivy-action with cilock-action
+        id: trivy-wrap
+        continue-on-error: true
+        uses: aflock-ai/cilock-action@v0.0.1-test
+        with:
+          step: trivy-scan
+          action-ref: aquasecurity/trivy-action@0.28.0
+          action-inputs: '{"image-ref": "example-api:test", "format": "sarif", "output": "trivy-results.sarif", "severity": "CRITICAL,HIGH"}'
+          attestations: github-action secretscan environment
+          enable-sigstore: true
+          fulcio-url: ${{ env.FULCIO_URL }}
+          fulcio-oidc-issuer: ${{ env.FULCIO_OIDC_ISSUER }}
+          fulcio-oidc-client-id: ${{ env.FULCIO_OIDC_CLIENT_ID }}
+          timestamp-servers: ${{ env.TSA_URL }}
+          enable-archivista: false
+          outfile: trivy-wrapped-attestation.json
+
+      - name: Analyze trivy-action attestation
+        if: always()
+        run: |
+          echo "## Real trivy-action Wrapped with cilock" >> $GITHUB_STEP_SUMMARY
+          if [ -f trivy-wrapped-attestation.json ]; then
+            python3 -c "
+          import json, base64
+          data = json.load(open('trivy-wrapped-attestation.json'))
+          payload = json.loads(base64.b64decode(data['payload']))
+          print(f'Step: {payload[\"predicate\"][\"name\"]}')
+          print(f'Attestation types:')
+          for att in payload['predicate']['attestations']:
+              print(f'  {att[\"type\"]}')
+              if 'github-action' in att['type']:
+                  ga = att['attestation']
+                  print(f'    actionref: {ga.get(\"actionref\", \"N/A\")}')
+                  print(f'    refpinned: {ga.get(\"refpinned\", \"N/A (omitted=false)\")}')
+                  print(f'    actiontype: {ga.get(\"actiontype\", \"N/A\")}')
+                  print(f'    exitcode: {ga.get(\"exitcode\", \"N/A\")}')
+              if 'secretscan' in att['type']:
+                  findings = att['attestation'].get('findings') or []
+                  print(f'    findings: {len(findings)}')
+          " | tee -a $GITHUB_STEP_SUMMARY
+          else
+            echo "No attestation file produced" | tee -a $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check SARIF output
+        if: always()
+        run: |
+          if [ -f trivy-results.sarif ]; then
+            echo "## Trivy SARIF Output" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json
+          data = json.load(open('trivy-results.sarif'))
+          runs = data.get('runs', [])
+          for run in runs:
+              results = run.get('results', [])
+              print(f'Trivy found {len(results)} vulnerabilities')
+              for r in results[:5]:
+                  print(f'  {r.get(\"ruleId\", \"?\")}: {r.get(\"message\", {}).get(\"text\", \"?\")[:80]}')
+          " | tee -a $GITHUB_STEP_SUMMARY
+          else
+            echo "No SARIF file produced" | tee -a $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload trivy attestation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-wrapped-attestation
+          path: trivy-wrapped-attestation.json
+          if-no-files-found: ignore
+
+      - name: Upload SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif
+          path: trivy-results.sarif
+          if-no-files-found: ignore
+
   # Job 3: Clean step — should PASS
   clean-step:
     runs-on: ubuntu-latest
