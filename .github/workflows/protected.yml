@@ -82,7 +82,119 @@ jobs:
           path: attack-attestation.json
           if-no-files-found: ignore
 
-  # Job 2: Real action wrapping — validate github-action attestor schema
+  # Job 2: Covert attack with --trace — can ptrace detect file-based secret exfil?
+  trace-covert-attack:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cilock
+        run: |
+          curl -sSfL https://github.com/aflock-ai/rookery/releases/download/${{ env.CILOCK_VERSION }}/cilock-${{ env.CILOCK_VERSION }}-linux-amd64.tar.gz -o cilock.tar.gz
+          tar xzf cilock.tar.gz
+          chmod +x cilock-linux-amd64
+          sudo mv cilock-linux-amd64 /usr/local/bin/cilock
+
+      - name: Create covert attack script
+        run: |
+          cat > covert-attack.sh << 'SCRIPT'
+          #!/bin/bash
+          # Simulates REAL TeamPCP behavior: secrets go to FILES, not stdout.
+          # Keys generated at runtime to avoid GitHub push protection.
+
+          FAKE_PAT="ghp_$(openssl rand -hex 18)"
+          FAKE_AWS="AKIA$(openssl rand -hex 8 | tr '[:lower:]' '[:upper:]')"
+          FAKE_SECRET="$(openssl rand -base64 30)"
+
+          # Write harvested creds to file (covert — nothing to stdout)
+          cat > /tmp/runner_collected_$$.txt << CREDS
+          GITHUB_TOKEN=$FAKE_PAT
+          AWS_ACCESS_KEY_ID=$FAKE_AWS
+          AWS_SECRET_ACCESS_KEY=$FAKE_SECRET
+          CREDS
+
+          # Simulate reading /proc/mem (covert)
+          cat /proc/self/environ > /dev/null 2>&1
+
+          # Only innocent output to stdout
+          echo "Trivy scan running..."
+          echo "No vulnerabilities found."
+          SCRIPT
+          chmod +x covert-attack.sh
+
+      - name: Run covert attack WITH trace
+        id: trace-attack
+        continue-on-error: true
+        run: |
+          cilock run \
+            --step covert-attack-traced \
+            --attestations secretscan \
+            --trace \
+            --attestor-secretscan-fail-on-detection \
+            --signer-fulcio-url ${{ env.FULCIO_URL }} \
+            --signer-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
+            --signer-fulcio-oidc-client-id ${{ env.FULCIO_OIDC_CLIENT_ID }} \
+            --timestamp-servers ${{ env.TSA_URL }} \
+            --enable-archivista=false \
+            --outfile trace-attestation.json \
+            -- bash covert-attack.sh
+
+      - name: Analyze trace results
+        if: always()
+        run: |
+          echo "## Trace Analysis: Covert Attack" >> $GITHUB_STEP_SUMMARY
+          if [ -f trace-attestation.json ]; then
+            python3 -c "
+          import json, base64
+          data = json.load(open('trace-attestation.json'))
+          payload = json.loads(base64.b64decode(data['payload']))
+
+          for att in payload['predicate']['attestations']:
+              if 'command-run' in att['type']:
+                  cr = att['attestation']
+                  print('=== COMMAND RUN ===')
+                  print(f'Stdout: {cr.get(\"stdout\", \"\")[:200]}')
+                  procs = cr.get('processes', [])
+                  print(f'Processes traced: {len(procs)}')
+                  for p in procs:
+                      print(f'  PID {p.get(\"processid\")}: {p.get(\"program\", \"?\")}')
+                      opened = p.get('openedfiles', {})
+                      if opened:
+                          print(f'    Opened {len(opened)} files:')
+                          for path in sorted(opened.keys())[:20]:
+                              print(f'      {path}')
+                      environ = p.get('environ', '')
+                      if environ:
+                          print(f'    Environ captured: {len(environ)} bytes')
+                  print()
+
+              if 'secretscan' in att['type']:
+                  findings = att['attestation'].get('findings') or []
+                  print(f'=== SECRETSCAN: {len(findings)} findings ===')
+                  for f in findings:
+                      print(f'  {f[\"ruleId\"]}: {f.get(\"match\", \"?\")[:50]}')
+          " | tee -a $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.trace-attack.outcome }}" = "failure" ]; then
+            echo "**BUILD BLOCKED** — secretscan detected secrets even in covert (file-based) attack" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**BUILD PASSED** — secretscan did NOT detect the covert attack. Trace captured file data but secretscan may need the file contents, not just paths." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload trace attestation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-attestation
+          path: trace-attestation.json
+          if-no-files-found: ignore
+
+  # Job 3: Real action wrapping — validate github-action attestor schema
   wrap-real-action:
     runs-on: ubuntu-latest
     permissions:
