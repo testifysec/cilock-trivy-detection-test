@@ -435,6 +435,58 @@ jobs:
             echo "**BEHAVIORAL DETECTION DID NOT TRIGGER** — trace data did not match the OPA policy rules" >> $GITHUB_STEP_SUMMARY
           fi
 
+  # Job: Verify source-restriction OPA policy against wrapped-action attestation
+  verify-source-policy:
+    needs: [wrap-real-action]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cilock
+        run: |
+          curl -sSfL https://github.com/aflock-ai/rookery/releases/download/${{ env.CILOCK_VERSION }}/cilock-${{ env.CILOCK_VERSION }}-linux-amd64.tar.gz -o cilock.tar.gz
+          tar xzf cilock.tar.gz
+          chmod +x cilock-linux-amd64
+          sudo mv cilock-linux-amd64 /usr/local/bin/cilock
+
+      - name: Download wrapped-action attestation
+        uses: actions/download-artifact@v4
+        with:
+          name: wrapped-action-attestation
+
+      - name: Sign source-restriction policy
+        run: |
+          cilock sign \
+            -f policy-source.json \
+            -o policy-source-signed.json \
+            -k policy-key.pem
+
+      - name: Verify source-restriction policy (expect DENY — not SHA-pinned)
+        id: verify-source
+        continue-on-error: true
+        run: |
+          echo "## Source Restriction Policy Verification" >> $GITHUB_STEP_SUMMARY
+          echo "Expected: DENY because actions/setup-node@v4 is not SHA-pinned" >> $GITHUB_STEP_SUMMARY
+          cilock verify \
+            -p policy-source-signed.json \
+            -a wrapped-action-attestation.json \
+            -k policy-pub.pem \
+            --enable-archivista=false \
+            --log-level debug 2>&1 | tee source-verify-output.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat source-verify-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Source restriction results
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.verify-source.outcome }}" = "failure" ]; then
+            echo "**SOURCE RESTRICTION WORKED** — OPA policy denied unpinned action ref" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**UNEXPECTED PASS** — policy should have denied unpinned action ref" >> $GITHUB_STEP_SUMMARY
+          fi
+
   # Job 7: Performance benchmark — npm install WITHOUT trace
   perf-no-trace:
     runs-on: ubuntu-latest
