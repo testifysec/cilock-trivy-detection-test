@@ -294,21 +294,36 @@ jobs:
       - name: Build Docker image for Trivy to scan
         run: docker build -t example-api:test .
 
+      - name: Install cilock
+        run: |
+          curl -sSfL https://github.com/aflock-ai/rookery/releases/download/${{ env.CILOCK_VERSION }}/cilock-${{ env.CILOCK_VERSION }}-linux-amd64.tar.gz -o cilock.tar.gz
+          tar xzf cilock.tar.gz
+          chmod +x cilock-linux-amd64
+          sudo mv cilock-linux-amd64 /usr/local/bin/cilock
+
       - name: Install Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-      # This is what a protected pipeline looks like:
-      # cilock-action wraps the real trivy-action, capturing attestation data
-      # including github-action attestor (actionref, refpinned) and secretscan.
-      - name: Wrap aquasecurity/trivy-action with cilock-action
+      # Wrap the trivy CLI directly with cilock run. This is equivalent to
+      # what trivy-action does internally, but with full attestation capture.
+      # In a protected pipeline, this replaces the vulnerable trivy-action.
+      - name: Run Trivy scan wrapped with cilock
         id: trivy-wrap
         continue-on-error: true
-        uses: aflock-ai/cilock-action@v0.0.1-test
-        with:
-          step: trivy-scan
-          action-ref: aquasecurity/trivy-action@v0.35.0
-          action-inputs: '{"image-ref": "example-api:test", "format": "sarif", "output": "trivy-results.sarif", "severity": "CRITICAL,HIGH", "skip-setup-trivy": "true"}'
+        run: |
+          cilock run \
+            --step trivy-scan \
+            --attestations secretscan \
+            --attestations environment \
+            --attestations git \
+            --signer-fulcio-url ${{ env.FULCIO_URL }} \
+            --signer-fulcio-oidc-issuer ${{ env.FULCIO_OIDC_ISSUER }} \
+            --signer-fulcio-oidc-client-id ${{ env.FULCIO_OIDC_CLIENT_ID }} \
+            --timestamp-servers ${{ env.TSA_URL }} \
+            --enable-archivista=false \
+            --outfile trivy-wrapped-attestation.json \
+            -- trivy image --format sarif --output trivy-results.sarif --severity CRITICAL,HIGH example-api:test
           attestations: github-action secretscan environment
           enable-sigstore: true
           fulcio-url: ${{ env.FULCIO_URL }}
